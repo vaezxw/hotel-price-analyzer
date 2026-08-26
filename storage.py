@@ -85,14 +85,26 @@ def has_crawled(city, checkin_date, db_path=None):
     return row is not None and row["status"] == "ok"
 
 
-def query_prices(city=None, db_path=None):
-    """查询全部（或指定城市）价格记录，按城市/日期/酒店排序。"""
+def query_prices(city=None, start_date=None, end_date=None, keyword=None, db_path=None):
+    """查询价格记录。可按城市、入住日起止、酒店名关键词过滤。"""
     conn = get_conn(db_path)
-    sql = "SELECT * FROM prices"
-    params = ()
+    clauses = []
+    params = []
     if city:
-        sql += " WHERE city=?"
-        params = (city,)
+        clauses.append("city=?")
+        params.append(city)
+    if start_date:
+        clauses.append("checkin_date>=?")
+        params.append(str(start_date)[:10])
+    if end_date:
+        clauses.append("checkin_date<=?")
+        params.append(str(end_date)[:10])
+    if keyword:
+        clauses.append("hotel_name LIKE ?")
+        params.append(f"%{keyword}%")
+    sql = "SELECT * FROM prices"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY city, checkin_date, hotel_name, room_type"
     rows = conn.execute(sql, params).fetchall()
     conn.close()

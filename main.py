@@ -362,14 +362,43 @@ def cmd_login(args):
     return 1
 
 
+def _filter_from_args(args):
+    """从命令参数取出城市/日期/关键词筛选条件。"""
+    start = getattr(args, "start", None) or getattr(args, "date", None)
+    end = getattr(args, "end", None) or getattr(args, "date", None)
+    return {
+        "city": getattr(args, "city", None) or None,
+        "start_date": start,
+        "end_date": end,
+        "keyword": getattr(args, "keyword", None) or None,
+    }
+
+
+def _query_for_report(args):
+    """按本次操作的筛选条件查库；菜单里的「全库分析/导出」不带条件则查全部。"""
+    filters = _filter_from_args(args)
+    rows = storage.query_prices(**filters)
+    total = storage.count_records()
+    if any(filters.values()) and rows:
+        bits = []
+        if filters["city"]:
+            bits.append(filters["city"])
+        if filters["keyword"]:
+            bits.append(filters["keyword"])
+        if filters["start_date"] or filters["end_date"]:
+            bits.append(f"{filters['start_date'] or '最早'} ~ {filters['end_date'] or '最晚'}")
+        print(f"本次筛选：{' · '.join(bits)}  → {len(rows)} 条（库内共 {total} 条）")
+    return rows
+
+
 def cmd_analyze(args):
     """对库内数据做统计分析并打印摘要。"""
     storage.init_db()
     import analyzer
 
-    rows = storage.query_prices()
+    rows = _query_for_report(args)
     if not rows:
-        print("库中暂无数据，先执行 collect 或 collect-all。")
+        print("没有符合条件的数据。若刚采集过，请核对城市/酒店名/入住日期。")
         return 1
 
     summary = analyzer.city_date_summary(rows)
@@ -406,20 +435,19 @@ def cmd_export(args):
     storage.init_db()
     from exporter import export_excel
 
-    rows = storage.query_prices()
+    rows = _query_for_report(args)
     if not rows:
-        print("库中暂无数据，先执行 collect 或 collect-all。")
+        print("没有符合条件的数据。若刚采集过，请核对城市/酒店名/入住日期。")
         return 1
 
-    start = getattr(args, "start", None) or getattr(args, "date", None)
-    end = getattr(args, "end", None) or getattr(args, "date", None)
+    filters = _filter_from_args(args)
     out = export_excel(
         rows,
         output_path=getattr(args, "output", None),
-        city=getattr(args, "city", None),
-        start_date=start,
-        end_date=end,
-        keyword=getattr(args, "keyword", None),
+        city=filters["city"],
+        start_date=filters["start_date"],
+        end_date=filters["end_date"],
+        keyword=filters["keyword"],
     )
     print(f"已导出：{out}")
     print(f"保存目录：{out.parent}")
