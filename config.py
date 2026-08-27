@@ -4,9 +4,34 @@
 按需修改这里，无需改其他代码。
 """
 import os
+import sys
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
+
+def _resolve_base_dir() -> Path:
+    """源码：项目根目录；PyInstaller exe：exe 所在目录（数据库/登录态/输出可写）。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+BASE_DIR = _resolve_base_dir()
+
+
+def _setup_playwright_env() -> None:
+    """PyInstaller 打包后，让 Playwright 找到内置 driver 与随包 Chromium。"""
+    if not getattr(sys, "frozen", False):
+        return
+    browsers = BASE_DIR / "browsers"
+    if browsers.is_dir():
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(browsers))
+    bundle_root = Path(getattr(sys, "_MEIPASS", ""))
+    driver = bundle_root / "playwright" / "driver"
+    if driver.is_dir():
+        os.environ.setdefault("PLAYWRIGHT_DRIVER_PATH", str(driver))
+
+
+_setup_playwright_env()
 
 # ------------------------------------------------------------------
 # 城市配置（携程列表页按城市名搜索）

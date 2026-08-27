@@ -17,9 +17,10 @@ import random
 import re
 from pathlib import Path
 
+import config  # 须在 playwright 之前：frozen 模式下设置 driver / browsers 路径
+
 from playwright.async_api import async_playwright
 
-import config
 import storage
 
 # 浏览器指纹档案（登录时保存 UA/视口，采集时复用，避免指纹变化导致会话失效）
