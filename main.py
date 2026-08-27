@@ -32,7 +32,7 @@ def _progress(msg):
 
 
 # ------------------------------------------------------------------
-# 交互式菜单（无参数运行 / 双击 run.bat 时进入）
+# 交互式菜单（无参数运行 / 双击 启动.bat 或 start.bat 时进入）
 # ------------------------------------------------------------------
 def _ask(prompt, default=None, allow_empty=False):
     """询问输入，回车用默认值。"""
@@ -472,7 +472,7 @@ def _parse_date(s):
 
 
 def main():
-    # 无参数运行（双击 run.bat）→ 交互式菜单
+    # 无参数运行（双击 启动.bat / start.bat）→ 交互式菜单
     if len(sys.argv) == 1:
         try:
             sys.exit(interactive_menu())

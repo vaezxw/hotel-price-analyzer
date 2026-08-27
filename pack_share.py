@@ -20,7 +20,8 @@ COPY_FILES = [
     "一键安装.bat",
     "说明.txt",
     "打包.bat",
-    "run.bat",
+    "start.bat",
+    "setup.bat",
     "pack_share.py",
 ]
 
