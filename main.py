@@ -59,25 +59,25 @@ def _ask_date(prompt, default=None):
 
 
 def _min_checkin_date():
-    """最早可采入住日（明天）。"""
-    return date.today() + timedelta(days=1)
+    """最早可采入住日（今天，含当日）。"""
+    return date.today()
 
 
 def _ask_future_date(prompt, default=None):
-    """询问未来入住日，拒绝今天及以前的日期。"""
+    """询问入住日，拒绝昨天及更早的日期（今天可采）。"""
     earliest = _min_checkin_date()
     if default is None:
         default = earliest.isoformat()
     while True:
         d = _ask_date(prompt, default=default)
-        if d <= date.today():
-            print(f"  只能采集未来入住日，最早可选 {earliest}（今天={date.today()} 不可采）")
+        if d < date.today():
+            print(f"  不能采集过去日期，最早可选 {earliest}（今天可采）")
             continue
         return d
 
 
 def _ask_future_date_range():
-    """询问开始/结束入住日，均须为未来日期。"""
+    """询问开始/结束入住日（今天及以后）。"""
     earliest = _min_checkin_date()
     start = _ask_future_date(f"开始日期（最早={earliest}）", default=earliest.isoformat())
     end = _ask_future_date("结束日期（回车=与开始相同）", default=start.isoformat())
@@ -131,7 +131,7 @@ def interactive_menu():
         print("=" * 46)
         print(f"  配置城市：{'/'.join(config.CITIES)}")
         print(f"  库内数据：{n} 条记录")
-        print(f"  采集范围：仅未来入住日（最早 { _min_checkin_date() }）")
+        print(f"  采集范围：今天及以后入住日（最早 { _min_checkin_date() }）")
         print(f"  导出目录：{config.OUTPUT_EXCEL_DIR / date.today().isoformat()}")
         print("-" * 46)
         print("  1. 登录携程（首次使用必做）")
@@ -218,14 +218,14 @@ def interactive_menu():
 
 
 def _future_dates_in_range(start, end, *, report=True):
-    """返回 [start, end] 内所有未来可订入住日期（跳过今天及以前）。"""
+    """返回 [start, end] 内今天及以后的入住日（跳过昨天及更早）。"""
     if start > end:
         start, end = end, start
     days = []
     skipped = []
     d = start
     while d <= end:
-        if d > date.today():
+        if d >= date.today():
             days.append(d)
         else:
             skipped.append(d)
@@ -234,23 +234,23 @@ def _future_dates_in_range(start, end, *, report=True):
     if report:
         if skipped:
             print(
-                f"提示：已跳过 {len(skipped)} 个过去/当天日期"
-                f"（{skipped[0]} ~ {skipped[-1]}），仅采集未来入住日。"
+                f"提示：已跳过 {len(skipped)} 个过去日期"
+                f"（{skipped[0]} ~ {skipped[-1]}），仅采集今天及以后。"
             )
         if days:
             if len(days) == 1:
-                print(f"将采集 1 个未来入住日：{days[0]}")
+                print(f"将采集 1 个入住日：{days[0]}")
             else:
-                print(f"将采集 {len(days)} 个未来入住日：{days[0]} ~ {days[-1]}")
+                print(f"将采集 {len(days)} 个入住日：{days[0]} ~ {days[-1]}")
     return days
 
 
 def _resolve_collect_dates(args):
-    """从 args 解析入住日期列表。支持 --date 或 --start [--end]，仅保留未来日期。"""
+    """从 args 解析入住日期列表。支持 --date 或 --start [--end]，保留今天及以后。"""
     if getattr(args, "date", None):
         d = _parse_date(args.date)
-        if d <= date.today():
-            print(f"错误：{d} 不是未来入住日（今天={date.today()}，最早可采 {_min_checkin_date()}）")
+        if d < date.today():
+            print(f"错误：{d} 是过去日期（今天={date.today()}，最早可采 {_min_checkin_date()}）")
             return []
         return _future_dates_in_range(d, d)
     if getattr(args, "start", None):
@@ -266,7 +266,7 @@ def _collect_days(cities, days, *, headless, force, keyword=None, full_rooms=Non
     from scraper import collect_city
 
     if not days:
-        print(f"没有可采集的未来入住日（最早可选 {_min_checkin_date()}）。")
+        print(f"没有可采集的入住日（最早可选 {_min_checkin_date()}，含今天）。")
         return 1, 0, 0
 
     if full_rooms is None:
