@@ -17,13 +17,28 @@ COPY_FILES = [
     "requirements.txt",
     "README.md",
     "启动.bat",
+    "启动GUI.bat",
     "一键安装.bat",
     "说明.txt",
     "打包.bat",
     "start.bat",
     "setup.bat",
     "pack_share.py",
+    "build_exe.bat",
+    "build_exe.py",
+    "hotel_analyzer.spec",
 ]
+
+
+def _copy_tree(name: str, src: Path, out: Path, missing: list):
+    if not src.exists():
+        missing.append(name)
+        return
+    if src.is_dir():
+        shutil.copytree(src, out / name)
+    else:
+        shutil.copy2(src, out / name)
+    print(f"  + {name}")
 
 
 def main():
@@ -43,12 +58,8 @@ def main():
 
     missing = []
     for name in COPY_FILES:
-        src = ROOT / name
-        if not src.exists():
-            missing.append(name)
-            continue
-        shutil.copy2(src, OUT / name)
-        print(f"  + {name}")
+        _copy_tree(name, ROOT / name, OUT, missing)
+    _copy_tree("gui", ROOT / "gui", OUT, missing)
 
     if missing:
         print()
@@ -64,7 +75,7 @@ def main():
     print("请检查后再发给朋友：")
     print("  - 已排除：ctrip_state.json / browser_profile / debug HTML / 数据库")
     print("  - 把该文件夹打成 zip 发给她")
-    print("  - 让她先读「说明.txt」，再双击「一键安装.bat」")
+    print("  - 让她先读「说明.txt」，再双击「启动GUI.bat」（图形界面）")
     print()
 
     try:

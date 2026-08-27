@@ -527,7 +527,7 @@ def _get_city_id(city):
     city_id = config.CITY_IDS.get(city)
     if city_id is None:
         raise ValueError(
-            f"城市「{city}」的携程 cityId 未配置。"
+            f"城市「{city}」的 cityId 未配置。"
             f"请在 config.CITY_IDS 中添加对应数字 ID 后重试。"
         )
     return city_id
@@ -659,7 +659,7 @@ async def login_and_save_state(progress=None):
         context = await browser.new_context(**ctx_kwargs)
         page = await context.new_page()
 
-        progress("打开携程酒店列表页（会自动跳转登录）...")
+        progress("打开酒店列表页（会自动跳转登录）...")
         progress("请在弹出的浏览器窗口完成登录：扫码 或 手机验证码")
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=config.PAGE_TIMEOUT_MS)
