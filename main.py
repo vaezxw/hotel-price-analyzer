@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-携程酒店房价采集与分析工具 — CLI 入口
+酒店房价采集与分析工具 — CLI 入口
 
 首次使用（重要）：
-  python main.py login         # 弹出浏览器窗口，扫码/手机验证码登录携程，保存登录态
-                               # 2025 年起携程酒店列表强制登录，未登录无法采集
+  python main.py login         # 弹出浏览器窗口，扫码/手机验证码登录，保存登录态
+                               # 2025 年起酒店列表强制登录，未登录无法采集
 
 用法示例：
   python main.py collect --city 上海 --date 2026-09-01
@@ -27,8 +27,26 @@ import config
 import storage
 
 
+_log_callback = None
+
+
+def set_log_callback(fn):
+    """GUI 模式下将进度/日志写入界面（fn 接收单行字符串）。"""
+    global _log_callback
+    _log_callback = fn
+
+
+def clear_log_callback():
+    global _log_callback
+    _log_callback = None
+
+
 def _progress(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+    line = f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"
+    if _log_callback is not None:
+        _log_callback(line)
+    else:
+        print(line, flush=True)
 
 
 # ------------------------------------------------------------------
@@ -101,7 +119,7 @@ def _ensure_login():
 
     if has_login_state():
         return True
-    print("未检测到携程登录态（采集必须先登录一次）。")
+    print("未检测到登录态（采集必须先登录一次）。")
     if _ask_yes_no("现在登录？（弹出浏览器窗口，扫码即可）", default=True):
         return cmd_login(SimpleNamespace()) == 0
     print("已跳过登录。")
@@ -127,14 +145,14 @@ def interactive_menu():
         n = storage.count_records()
         print()
         print("=" * 46)
-        print("     携程酒店房价采集与分析工具")
+        print("     酒店房价采集与分析工具")
         print("=" * 46)
         print(f"  配置城市：{'/'.join(config.CITIES)}")
         print(f"  库内数据：{n} 条记录")
         print(f"  采集范围：今天及以后入住日（最早 { _min_checkin_date() }）")
         print(f"  导出目录：{config.OUTPUT_EXCEL_DIR / date.today().isoformat()}")
         print("-" * 46)
-        print("  1. 登录携程（首次使用必做）")
+        print("  1. 登录（首次使用必做）")
         print("  2. 采集 单个城市（支持日期范围）")
         print("  3. 批量采集（配置城市 × 日期范围）")
         print("  4. 统计分析库内数据")
@@ -299,7 +317,7 @@ def _collect_days(cities, days, *, headless, force, keyword=None, full_rooms=Non
             total_records += n_records
 
             if blocked == "login_required":
-                print("需要携程登录态，请先执行：python main.py login")
+                print("需要登录态，请先执行：python main.py login")
                 return 3, total_hotels, total_records
             if blocked:
                 print(f"!! [{task_label} {ci}] 触发验证码/风控，停止后续采集")
@@ -346,12 +364,12 @@ def cmd_collect_all(args):
 
 
 def cmd_login(args):
-    """有头模式打开携程，用户手动登录，保存登录态。"""
+    """有头模式打开网站，用户手动登录，保存登录态。"""
     import asyncio
 
     from scraper import login_and_save_state
 
-    print("即将打开携程登录窗口（有头模式）...")
+    print("即将打开登录窗口（有头模式）...")
     print("请在浏览器中完成登录：扫码 或 手机验证码")
     # login_and_save_state 是协程，必须 asyncio.run 驱动，否则浏览器不会启动
     ok = asyncio.run(login_and_save_state(progress=_progress))
@@ -481,13 +499,13 @@ def main():
             sys.exit(0)
 
     parser = argparse.ArgumentParser(
-        description="携程酒店房价采集与分析工具（个人非商用）",
+        description="酒店房价采集与分析工具（个人非商用）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_login = sub.add_parser("login", help="首次使用：登录携程并保存登录态")
+    p_login = sub.add_parser("login", help="首次使用：登录并保存登录态")
     p_login.set_defaults(func=cmd_login)
 
     p_collect = sub.add_parser("collect", help="采集单个城市（单日或日期范围）")

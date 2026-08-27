@@ -84,12 +84,7 @@ def _write_start_bat() -> None:
 setlocal EnableExtensions
 cd /d "%~dp0"
 set "PLAYWRIGHT_BROWSERS_PATH=%~dp0browsers"
-hotel-analyzer.exe %*
-if errorlevel 1 echo.
-if errorlevel 1 echo [ERROR] Program exited with error.
-echo.
-echo Press any key to close...
-pause >nul
+start "" "%~dp0hotel-analyzer.exe"
 endlocal
 """,
         encoding="ascii",
@@ -147,11 +142,11 @@ def main() -> int:
     print(f"总体积约 {size_mb:.0f} MB（含 Chromium）")
     print("=" * 50)
     print()
-    print("发给朋友：")
+    print("发给用户：")
     print("  1. 将整个 dist/hotel-analyzer 文件夹打成 zip")
-    print("  2. 解压后双击 start.bat（或 hotel-analyzer.exe）")
-    print("  3. 首次使用选「登录」扫码保存登录态")
-    print("  4. 无需安装 Python")
+    print("  2. 用户解压后双击 hotel-analyzer.exe（或 start.bat）")
+    print("  3. 勾选免责声明 → 点击「登录」扫码")
+    print("  4. 无需安装 Python；使用说明见包内 说明.txt")
     print()
 
     try:

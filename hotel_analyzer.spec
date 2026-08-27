@@ -1,24 +1,33 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec：携程酒店房价工具 → Windows onedir 目录。"""
+"""PyInstaller spec：桌面 GUI 版 → Windows onedir 目录。"""
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
 
 pw_datas, pw_binaries, pw_hidden = collect_all("playwright")
+ctk_datas, ctk_binaries, ctk_hidden = collect_all("customtkinter")
 
-hidden = list(pw_hidden) + collect_submodules("playwright") + [
-    "greenlet",
-    "pyee",
-    "openpyxl",
-    "openpyxl.cell._writer",
-    "matplotlib.backends.backend_agg",
-]
+hidden = (
+    list(pw_hidden)
+    + list(ctk_hidden)
+    + collect_submodules("playwright")
+    + [
+        "greenlet",
+        "pyee",
+        "openpyxl",
+        "openpyxl.cell._writer",
+        "matplotlib.backends.backend_agg",
+        "customtkinter",
+        "tkinter",
+        "tkinter.ttk",
+    ]
+)
 
 a = Analysis(
-    ["main.py"],
+    ["gui/app.py"],
     pathex=[],
-    binaries=pw_binaries,
-    datas=pw_datas,
+    binaries=pw_binaries + ctk_binaries,
+    datas=pw_datas + ctk_datas,
     hiddenimports=hidden,
     hookspath=[],
     hooksconfig={},
@@ -42,7 +51,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
