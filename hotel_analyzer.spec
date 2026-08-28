@@ -16,6 +16,7 @@ hidden = (
         "pyee",
         "openpyxl",
         "openpyxl.cell._writer",
+        "business_report",
         "matplotlib.backends.backend_agg",
         "customtkinter",
         "tkinter",

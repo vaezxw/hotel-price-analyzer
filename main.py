@@ -281,7 +281,7 @@ def _resolve_collect_dates(args):
 
 def _collect_days(cities, days, *, headless, force, keyword=None, full_rooms=None):
     """按城市 × 日期循环采集，返回 (exit_code, total_hotels, total_records)。"""
-    from scraper import collect_city
+    from scraper import collect_city, parse_hotel_names
 
     if not days:
         print(f"没有可采集的入住日（最早可选 {_min_checkin_date()}，含今天）。")
@@ -293,19 +293,27 @@ def _collect_days(cities, days, *, headless, force, keyword=None, full_rooms=Non
     print(f"采集模式：{mode}")
 
     total_hotels = total_records = 0
+    hotel_names = parse_hotel_names(keyword)
     keyword = keyword or None
 
     for city in cities:
         for d in days:
             ci = d.isoformat()
             co = (d + timedelta(days=1)).isoformat()
-            task_label = f"{city}{'·' + keyword if keyword else ''}"
+            if len(hotel_names) > 1:
+                task_label = f"{city}·{len(hotel_names)}家指定酒店"
+            elif len(hotel_names) == 1:
+                task_label = f"{city}·{hotel_names[0]}"
+            else:
+                task_label = f"{city}{'·' + keyword if keyword else ''}"
 
-            if not force and storage.has_crawled(city, ci):
+            if not force and not hotel_names and storage.has_crawled(city, ci):
                 print(f"[{task_label} {ci}] 已采集过，跳过（--force 可强制重采）")
                 continue
 
             print(f"开始采集：{task_label} 入住 {ci}（{co} 退房）")
+            if len(hotel_names) > 1:
+                print(f"  指定酒店：{'、'.join(hotel_names)}")
             n_hotels, n_records, blocked = collect_city(
                 city, ci, co,
                 headless=headless,
@@ -402,7 +410,9 @@ def _query_for_report(args):
         if filters["city"]:
             bits.append(filters["city"])
         if filters["keyword"]:
-            bits.append(filters["keyword"])
+            from scraper import parse_hotel_names
+            names = parse_hotel_names(filters["keyword"])
+            bits.append("、".join(names) if names else filters["keyword"])
         if filters["start_date"] or filters["end_date"]:
             bits.append(f"{filters['start_date'] or '最早'} ~ {filters['end_date'] or '最晚'}")
         print(f"本次筛选：{' · '.join(bits)}  → {len(rows)} 条（库内共 {total} 条）")
@@ -449,8 +459,9 @@ def cmd_analyze(args):
 
 
 def cmd_export(args):
-    """导出 Excel（明细/汇总/趋势图/波动率）。"""
+    """导出 Excel（分析表 + 业务汇总表）。"""
     storage.init_db()
+    from business_report import export_business_report
     from exporter import export_excel
 
     rows = _query_for_report(args)
@@ -467,7 +478,9 @@ def cmd_export(args):
         end_date=filters["end_date"],
         keyword=filters["keyword"],
     )
-    print(f"已导出：{out}")
+    biz = export_business_report(rows, detail_path=out)
+    print(f"已导出分析表：{out}")
+    print(f"已导出业务汇总：{biz}")
     print(f"保存目录：{out.parent}")
     return 0
 
