@@ -105,6 +105,19 @@ def _copy_readme() -> None:
         shutil.copy2(src, DIST_APP / "说明.txt")
 
 
+def _copy_assets() -> None:
+    src_dir = ROOT / "assets"
+    if not src_dir.is_dir():
+        return
+    dest = DIST_APP / "assets"
+    dest.mkdir(exist_ok=True)
+    for name in ("app_icon.ico", "app_icon.png"):
+        src = src_dir / name
+        if src.is_file():
+            shutil.copy2(src, dest / name)
+            print(f"  + assets/{name}")
+
+
 def main() -> int:
     print("=" * 50)
     print("  PyInstaller 打包：hotel-analyzer")
@@ -133,6 +146,7 @@ def main() -> int:
     _prepare_data_dirs()
     _write_start_bat()
     _copy_readme()
+    _copy_assets()
 
     size_mb = sum(f.stat().st_size for f in DIST_APP.rglob("*") if f.is_file()) / (1024 * 1024)
 
