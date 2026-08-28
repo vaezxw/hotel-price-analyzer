@@ -2,8 +2,10 @@
 """
 业务汇总表导出：按用户模板生成「酒店 × 房型 × 入住日期 × 采集时段」矩阵 Excel。
 
+有早餐 / 无早餐各一个 Sheet；Sheet 内仍按 10:00/14:00/18:00/22:00 分列。
+
 模板结构（每个酒店一块）：
-  - 粉头：酒店名 + 入住日期（每日下分 10:00/14:00/18:00/22:00 四档）
+  - 粉头：酒店名 + 入住日期（每日下分四档时段）
   - 房型行：房间数量 + 各时段价格（红色高亮留空，由人工填写）
   - 流量：留空，由人工填写
   - 综合门市价：该酒店该入住日所有房型、所有时段价格的日均值（合并每日四列）
@@ -93,46 +95,22 @@ def resolve_business_report_path(detail_path: Path) -> Path:
     return detail_path.with_name(f"{detail_path.stem}_业务汇总{detail_path.suffix}")
 
 
-def export_business_report(rows, output_path: Path | None = None, *, detail_path: Path | None = None):
-    """
-    导出业务汇总矩阵 Excel。
-    output_path 未指定时，由 detail_path 推导；二者都缺省时写入 输出/excel/今天/业务汇总_时间.xlsx
-    """
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.utils import get_column_letter
+def _filter_rows_by_breakfast(rows, breakfast: str):
+    return [
+        r for r in rows
+        if storage.classify_breakfast(r["room_type"] if "room_type" in r.keys() else "") == breakfast
+    ]
 
-    from exporter import resolve_export_path
 
+def _write_business_sheet(ws, rows, *, border, center, left, PatternFill, Font, get_column_letter):
+    """在 worksheet 上写入一套业务汇总矩阵。"""
     if not rows:
-        raise ValueError("没有可导出的数据")
-
-    if output_path is None:
-        if detail_path is not None:
-            output_path = resolve_business_report_path(Path(detail_path))
-        else:
-            output_path = resolve_export_path(None).with_name(
-                f"业务汇总_{datetime.now().strftime('%H%M%S')}.xlsx"
-            )
-    else:
-        output_path = Path(output_path)
-        if output_path.suffix.lower() != ".xlsx":
-            output_path = output_path.with_suffix(".xlsx")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+        ws.cell(row=1, column=1, value="（本分类暂无数据）")
+        return
 
     grid = _build_price_grid(rows)
     dates = _sorted_dates(rows)
     hotels = sorted(grid.keys())
-
-    thin = Side(style="thin", color="CCCCCC")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "业务汇总"
 
     row_idx = 1
     slots_per_day = len(TIME_SLOTS)
@@ -259,6 +237,61 @@ def export_business_report(rows, output_path: Path | None = None, *, detail_path
     ws.column_dimensions["B"].width = 10
     for col in range(3, total_cols + 1):
         ws.column_dimensions[get_column_letter(col)].width = 8
+
+
+def export_business_report(rows, output_path: Path | None = None, *, detail_path: Path | None = None):
+    """
+    导出业务汇总矩阵 Excel（有早餐 / 无早餐 两个 Sheet）。
+    output_path 未指定时，由 detail_path 推导；二者都缺省时写入 输出/excel/今天/业务汇总_时间.xlsx
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    from exporter import resolve_export_path
+
+    if not rows:
+        raise ValueError("没有可导出的数据")
+
+    if output_path is None:
+        if detail_path is not None:
+            output_path = resolve_business_report_path(Path(detail_path))
+        else:
+            output_path = resolve_export_path(None).with_name(
+                f"业务汇总_{datetime.now().strftime('%H%M%S')}.xlsx"
+            )
+    else:
+        output_path = Path(output_path)
+        if output_path.suffix.lower() != ".xlsx":
+            output_path = output_path.with_suffix(".xlsx")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    thin = Side(style="thin", color="CCCCCC")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    wb = Workbook()
+    first = True
+    for breakfast in storage.BREAKFAST_LABELS:
+        subset = _filter_rows_by_breakfast(rows, breakfast)
+        if first:
+            ws = wb.active
+            ws.title = breakfast
+            first = False
+        else:
+            ws = wb.create_sheet(breakfast)
+        _write_business_sheet(
+            ws,
+            subset,
+            border=border,
+            center=center,
+            left=left,
+            PatternFill=PatternFill,
+            Font=Font,
+            get_column_letter=get_column_letter,
+        )
 
     wb.save(output_path)
     return output_path

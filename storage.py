@@ -9,6 +9,9 @@ from pathlib import Path
 import config
 
 TIME_SLOTS = ("10:00", "14:00", "18:00", "22:00")
+BREAKFAST_WITH = "有早餐"
+BREAKFAST_WITHOUT = "无早餐"
+BREAKFAST_LABELS = (BREAKFAST_WITH, BREAKFAST_WITHOUT)
 
 
 def infer_time_slot(dt: datetime | None = None) -> str:
@@ -22,6 +25,16 @@ def infer_time_slot(dt: datetime | None = None) -> str:
     if h < 20:
         return "18:00"
     return "22:00"
+
+
+def classify_breakfast(room_type: str | None) -> str:
+    """根据房型名判断有无早餐（房型常带 ·无早餐 / ·1份早餐 等后缀）。"""
+    rt = room_type or ""
+    if any(k in rt for k in ("无早餐", "不含早餐", "不含早", "无早")):
+        return BREAKFAST_WITHOUT
+    if any(k in rt for k in ("早餐", "含早", "单早", "双早")):
+        return BREAKFAST_WITH
+    return BREAKFAST_WITHOUT
 
 
 def get_conn(db_path=None):

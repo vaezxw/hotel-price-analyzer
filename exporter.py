@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Excel 导出模块：明细 / 城市汇总 / 价格趋势图 / 波动率排行 四个 Sheet。
+Excel 导出模块：明细按「采集时段 × 有/无早餐」分 Sheet；另有城市汇总 / 趋势图 / 波动率。
 """
 import io
 import re
@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
 import config
+import storage
 
 # ------------------------------------------------------------------
 # 中文字体配置（Windows 常见中文字体）
@@ -123,6 +124,89 @@ def resolve_export_path(output_path=None, *, city=None, start_date=None, end_dat
 
 
 # ------------------------------------------------------------------
+# 明细按采集时段 × 早餐分 Sheet
+# ------------------------------------------------------------------
+def _row_time_slot(row) -> str:
+    if "time_slot" in row.keys() and row["time_slot"]:
+        return str(row["time_slot"])
+    crawled = row["crawled_at"] if "crawled_at" in row.keys() else None
+    if crawled:
+        try:
+            dt = datetime.strptime(str(crawled)[:19], "%Y-%m-%d %H:%M:%S")
+            return storage.infer_time_slot(dt)
+        except ValueError:
+            pass
+    return storage.TIME_SLOTS[0]
+
+
+def _row_breakfast(row) -> str:
+    room = row["room_type"] if "room_type" in row.keys() else ""
+    return storage.classify_breakfast(room)
+
+
+def _slot_hour_label(slot: str) -> str:
+    hour_part = str(slot).split(":")[0]
+    try:
+        return str(int(hour_part))
+    except ValueError:
+        return hour_part or "0"
+
+
+def _detail_sheet_title(slot: str, breakfast: str) -> str:
+    """Excel 工作表名不能含冒号，如「明细_10点_有早餐」。"""
+    if slot == "其他":
+        return f"明细_其他_{breakfast}"
+    return f"明细_{_slot_hour_label(slot)}点_{breakfast}"
+
+
+def _group_rows_by_slot_breakfast(rows) -> list[tuple[str, str, list]]:
+    """
+    按 时段×早餐 分桶，返回有序列表 [(slot, breakfast, rows), ...]。
+    标准四档 × 有/无早餐始终出现（可为空表）；未知时段归「其他」。
+    """
+    buckets: dict[tuple[str, str], list] = {}
+    for slot in storage.TIME_SLOTS:
+        for bf in storage.BREAKFAST_LABELS:
+            buckets[(slot, bf)] = []
+    other: dict[str, list] = {bf: [] for bf in storage.BREAKFAST_LABELS}
+
+    for r in rows:
+        slot = _row_time_slot(r)
+        bf = _row_breakfast(r)
+        if slot in storage.TIME_SLOTS:
+            buckets[(slot, bf)].append(r)
+        else:
+            other[bf].append(r)
+
+    ordered = [(s, b, buckets[(s, b)]) for s in storage.TIME_SLOTS for b in storage.BREAKFAST_LABELS]
+    for bf in storage.BREAKFAST_LABELS:
+        if other[bf]:
+            ordered.append(("其他", bf, other[bf]))
+    return ordered
+
+
+def _write_detail_sheet(ws, rows):
+    headers = ["城市", "酒店名称", "入住日期", "房型", "早餐", "价格(元/晚)", "采集时段", "来源", "采集时间"]
+    ws.append(headers)
+    for r in rows:
+        ws.append([
+            r["city"],
+            r["hotel_name"],
+            r["checkin_date"],
+            r["room_type"],
+            _row_breakfast(r),
+            r["price"],
+            _row_time_slot(r),
+            r["source"],
+            r["crawled_at"],
+        ])
+    _style_header(ws, headers)
+    if ws.max_row >= 1 and ws.max_column >= 1:
+        ws.auto_filter.ref = ws.dimensions
+        ws.freeze_panes = "A2"
+
+
+# ------------------------------------------------------------------
 # 图表颜色（浅色背景 + 可读深色线条，每城市一色）
 # ------------------------------------------------------------------
 TREND_COLORS = [
@@ -158,7 +242,7 @@ def make_trend_chart(trend):
 
 def export_excel(rows, output_path=None, trend=None, volatility=None, mom=None,
                  *, city=None, start_date=None, end_date=None, keyword=None):
-    """导出多 Sheet Excel。rows 为 storage 查询结果。"""
+    """导出多 Sheet Excel。明细按「时段×早餐」分 Sheet；汇总/趋势/波动基于全部 rows。"""
     from openpyxl import Workbook
     from openpyxl.drawing.image import Image as XLImage
     from openpyxl.styles import Font
@@ -172,24 +256,25 @@ def export_excel(rows, output_path=None, trend=None, volatility=None, mom=None,
     mom = mom if mom is not None else analyzer.price_mom(rows)
 
     wb = Workbook()
+    groups = (
+        _group_rows_by_slot_breakfast(rows)
+        if rows
+        else [(s, b, []) for s in storage.TIME_SLOTS for b in storage.BREAKFAST_LABELS]
+    )
 
-    # ---------- Sheet 1: 明细数据 ----------
-    ws = wb.active
-    ws.title = "明细数据"
-    has_slot = rows and "time_slot" in rows[0].keys()
-    headers = ["城市", "酒店名称", "入住日期", "房型", "价格(元/晚)", "采集时段", "来源", "采集时间"]
-    if not has_slot:
-        headers = [h for h in headers if h != "采集时段"]
-    ws.append(headers)
-    for r in rows:
-        row = [r["city"], r["hotel_name"], r["checkin_date"], r["room_type"], r["price"]]
-        if has_slot:
-            row.append(r["time_slot"])
-        row.extend([r["source"], r["crawled_at"]])
-        ws.append(row)
-    _style_header(ws, headers)
+    # ---------- 明细：时段 × 有/无早餐 ----------
+    first = True
+    for slot, breakfast, slot_rows in groups:
+        title = _detail_sheet_title(slot, breakfast)
+        if first:
+            ws = wb.active
+            ws.title = title
+            first = False
+        else:
+            ws = wb.create_sheet(title)
+        _write_detail_sheet(ws, slot_rows)
 
-    # ---------- Sheet 2: 城市汇总 ----------
+    # ---------- 城市汇总 ----------
     ws2 = wb.create_sheet("城市汇总")
     h2 = ["城市", "入住日期", "样本数", "均价(元)", "中位数", "最低价", "最高价", "标准差", "变异系数CV"]
     ws2.append(h2)
@@ -199,7 +284,7 @@ def export_excel(rows, output_path=None, trend=None, volatility=None, mom=None,
                     s["min"], s["max"], s["std"], s["cv"]])
     _style_header(ws2, h2)
 
-    # ---------- Sheet 3: 价格趋势图 ----------
+    # ---------- 价格趋势图 ----------
     ws3 = wb.create_sheet("价格趋势")
     if trend:
         png = make_trend_chart(trend)
@@ -210,7 +295,7 @@ def export_excel(rows, output_path=None, trend=None, volatility=None, mom=None,
         ws3["A35"] = "说明：折线为各城市酒店日均价（每个入住日期的均价）"
         ws3["A35"].font = Font(size=10, color="666666")
 
-    # ---------- Sheet 4: 波动率排行 ----------
+    # ---------- 波动率排行 ----------
     ws4 = wb.create_sheet("波动率排行")
     h4 = ["排名", "城市", "酒店名称", "有效日期数", "均价(元)", "标准差", "变异系数CV", "最低价", "最高价"]
     ws4.append(h4)

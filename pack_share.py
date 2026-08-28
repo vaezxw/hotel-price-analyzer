@@ -62,6 +62,7 @@ def main():
         _copy_tree(name, ROOT / name, OUT, missing)
     _copy_tree("gui", ROOT / "gui", OUT, missing)
     _copy_tree("assets", ROOT / "assets", OUT, missing)
+    _copy_tree("scheduler", ROOT / "scheduler", OUT, missing)
 
     if missing:
         print()
