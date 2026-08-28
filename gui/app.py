@@ -14,6 +14,16 @@ from pathlib import Path
 from tkinter import messagebox
 from types import SimpleNamespace
 
+# Windows：必须在 import GUI / 创建窗口之前设置，否则任务栏一直显示 pythonw 图标
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "HotelPriceAnalyzer.Desktop.1"
+        )
+    except Exception:
+        pass
+
 import customtkinter as ctk
 
 # 项目根目录加入 path（开发模式 python gui/app.py）
@@ -32,6 +42,7 @@ ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
 
+
 def _today() -> str:
     return date.today().isoformat()
 
@@ -47,19 +58,116 @@ def _parse_date(s: str) -> date | None:
         return None
 
 
+def _icon_candidates() -> list[Path]:
+    """开发态 / 打包态下可能的图标路径。"""
+    names = ("app_icon.ico", "app_icon.png", "app_icon.ico", "app_icon.png")
+    bases = [ROOT / "assets"]
+    if getattr(sys, "frozen", False):
+        meipass = Path(getattr(sys, "_MEIPASS", ""))
+        bases.extend([Path(sys.executable).resolve().parent / "assets", meipass / "assets", meipass])
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for base in bases:
+        for name in names:
+            p = base / name
+            if p.is_file() and p not in seen:
+                out.append(p)
+                seen.add(p)
+    return out
+
+
+def _win_toplevel_hwnd(widget_hwnd: int) -> int:
+    """Tk 的 winfo_id() 是子窗口；任务栏图标在顶层父窗口 HWND 上。"""
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    GA_ROOT = 2
+    root = user32.GetAncestor(widget_hwnd, GA_ROOT)
+    if root:
+        return int(root)
+    parent = user32.GetParent(widget_hwnd)
+    return int(parent or widget_hwnd)
+
+
+def _win_set_hwnd_icon(hwnd: int, ico_path: Path) -> tuple[int, int]:
+    """通过 Win32 WM_SETICON 设置图标；返回需长期持有的句柄。"""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    IMAGE_ICON = 1
+    LR_LOADFROMFILE = 0x0010
+    WM_SETICON = 0x0080
+    ICON_SMALL = 0
+    ICON_BIG = 1
+
+    user32.LoadImageW.argtypes = [
+        wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    user32.LoadImageW.restype = wintypes.HANDLE
+    user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.SendMessageW.restype = wintypes.LPARAM
+
+    path = str(ico_path.resolve())
+    h_default = user32.LoadImageW(None, path, IMAGE_ICON, 0, 0, LR_LOADFROMFILE)
+    h_big = user32.LoadImageW(None, path, IMAGE_ICON, 32, 32, LR_LOADFROMFILE) or h_default
+    h_small = user32.LoadImageW(None, path, IMAGE_ICON, 16, 16, LR_LOADFROMFILE) or h_big
+    if h_big:
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+    if h_small:
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
+    return int(h_big or 0), int(h_small or 0)
+
+
+def _apply_window_icon(win: ctk.CTk) -> None:
+    """设置窗口图标（只执行一次，避免 <Map>/after 反复加载导致卡死闪退）。"""
+    if getattr(win, "_app_icon_done", False):
+        return
+    win._app_icon_done = True
+
+    paths = _icon_candidates()
+    if not paths:
+        return
+    ico = next((p for p in paths if p.suffix.lower() == ".ico"), None)
+
+    # Windows：只用 .ico + WM_SETICON。不要用 PhotoImage 加载大 PNG（1024px 极易卡死/闪退）
+    if sys.platform == "win32" and ico is not None:
+        try:
+            win.iconbitmap(default=str(ico))
+            win.iconbitmap(str(ico))
+        except Exception:
+            pass
+        try:
+            top_hwnd = _win_toplevel_hwnd(int(win.winfo_id()))
+            win._app_icon_handles = _win_set_hwnd_icon(top_hwnd, ico)
+            win._app_icon_path = str(ico)
+        except Exception:
+            pass
+        return
+
+    if ico is not None:
+        try:
+            win.iconbitmap(str(ico))
+        except Exception:
+            pass
+
+
 class HotelAnalyzerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("酒店房价采集与分析")
         self.geometry("920x680")
         self.minsize(820, 600)
-
         storage.init_db()
-        self.runner = TaskRunner(self._append_log, on_done=self._on_task_done)
+        # 必须用 _log（after 回主线程），不能把 _append_log 直接给后台线程，否则易卡死/闪退
+        self.runner = TaskRunner(self._log, on_done=self._on_task_done)
 
         self._build_ui()
         self._refresh_status()
         self._log("就绪。请先勾选底部免责声明，再点击「登录」。")
+        # 窗口真正显示后再设图标一次（避免启动阶段阻塞）
+        self.after_idle(lambda: _apply_window_icon(self))
 
     # ------------------------------------------------------------------
     # UI
@@ -293,7 +401,8 @@ class HotelAnalyzerApp(ctk.CTk):
         )
 
     def _log(self, msg: str):
-        self.after(0, lambda: self._append_log(msg))
+        # m=msg 避免闭包延迟取值；必须回主线程再改控件
+        self.after(0, lambda m=msg: self._append_log(m))
 
     def _append_log(self, msg: str):
         self.log_box.configure(state="normal")
@@ -421,11 +530,30 @@ class HotelAnalyzerApp(ctk.CTk):
 
 
 def main():
+    # pythonw 无控制台，崩溃时写日志便于排查
+    log_path = ROOT / "data" / "gui_crash.log"
+
+    def _excepthook(exc_type, exc, tb):
+        import traceback
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text(
+                "".join(traceback.format_exception(exc_type, exc, tb)),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        try:
+            messagebox.showerror("程序异常", f"{exc_type.__name__}: {exc}\n\n详情见:\n{log_path}")
+        except Exception:
+            pass
+
+    sys.excepthook = _excepthook
     try:
         app = HotelAnalyzerApp()
         app.mainloop()
     except Exception as e:
-        messagebox.showerror("启动失败", str(e))
+        _excepthook(type(e), e, e.__traceback__)
         raise SystemExit(1)
 
 
