@@ -482,6 +482,8 @@ def cmd_export(args):
     print(f"已导出分析表：{out}")
     print(f"已导出业务汇总：{biz}")
     print(f"保存目录：{out.parent}")
+    from mailer import try_send_export_mail
+    try_send_export_mail([out, biz])
     return 0
 
 

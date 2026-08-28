@@ -35,6 +35,7 @@ import config
 import main as app_main
 import storage
 from gui.datepicker import DatePickerEntry
+from gui.mail_window import MailWindow
 from gui.schedule_window import ScheduleWindow
 from gui.tasks import TaskRunner
 from scraper import has_login_state
@@ -173,11 +174,13 @@ class HotelAnalyzerApp(ctk.CTk):
             can_run=lambda: bool(self.agree_var.get()) if hasattr(self, "agree_var") else False,
         )
         self._schedule_win = None
+        self._mail_win = None
 
         self._build_ui()
         self._refresh_status()
         self._log("就绪。请先勾选底部免责声明，再点击「登录」。")
         self._log("提示：可在「定时任务」中配置多时段自动采集+分析+导出（程序需保持运行）。")
+        self._log("提示：可在「邮件设置」中配置导出后自动发到 QQ 邮箱。")
         # 窗口真正显示后再设图标一次（避免启动阶段阻塞）
         self.after_idle(lambda: _apply_window_icon(self))
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -277,10 +280,11 @@ class HotelAnalyzerApp(ctk.CTk):
             ("分析", self._on_analyze, {}, False),
             ("导出 Excel", self._on_export, {}, False),
             ("定时任务", self._on_schedule, {"fg_color": "#0e639c", "hover_color": "#0b507c"}, False),
+            ("邮件设置", self._on_mail, {"fg_color": "#6b4f9c", "hover_color": "#5a4183"}, False),
             ("打开导出目录", self._on_open_export, {"fg_color": "gray40", "hover_color": "gray30"}, False),
         ]
         for i, (text, cmd, kw, always_off) in enumerate(buttons):
-            btn = ctk.CTkButton(btn_row, text=text, width=110, command=cmd, **kw)
+            btn = ctk.CTkButton(btn_row, text=text, width=100, command=cmd, **kw)
             btn.grid(row=0, column=i, padx=4, pady=4)
             self._action_btns.append(btn)
             if always_off:
@@ -459,6 +463,15 @@ class HotelAnalyzerApp(ctk.CTk):
             log_fn=self._log,
             ensure_agreed=self._ensure_agreed,
         )
+
+    def _on_mail(self):
+        if not self._ensure_agreed():
+            return
+        if self._mail_win is not None and self._mail_win.winfo_exists():
+            self._mail_win.lift()
+            self._mail_win.focus_force()
+            return
+        self._mail_win = MailWindow(self, log_fn=self._log)
 
     def _on_close(self):
         try:

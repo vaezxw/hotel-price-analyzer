@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "smtp_host": "smtp.qq.com",
+  "smtp_port": 465,
+  "use_ssl": true,
+  "username": "2148983461@qq.com",
+  "password": "xezbqfgxxzkvdjgf",
+  "from_addr": "2148983461@qq.com",
+  "to_addrs": [
+    "1966157151@qq.com"
+  ],
+  "subject_prefix": "酒店房价导出"
+}

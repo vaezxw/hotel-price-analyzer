@@ -28,6 +28,7 @@ hidden = (
         "openpyxl",
         "openpyxl.cell._writer",
         "business_report",
+        "mailer",
         "matplotlib.backends.backend_agg",
         "customtkinter",
         "tkinter",

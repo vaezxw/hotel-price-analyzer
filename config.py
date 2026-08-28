@@ -110,6 +110,9 @@ OUTPUT_EXCEL_DIR = OUTPUT_DIR / "excel"
 # 携程登录态存储文件（首次 python main.py login 生成）
 LOGIN_STATE_PATH = BASE_DIR / "data" / "ctrip_state.json"
 
+# 导出后邮件发送配置（含授权码，勿外传）
+MAIL_SETTINGS_PATH = BASE_DIR / "data" / "mail_settings.json"
+
 # 登录等待：最多等多久用户完成登录（秒）
 LOGIN_MAX_WAIT = 300
 # 登录检测轮询间隔（秒）
