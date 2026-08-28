@@ -8,6 +8,21 @@ from pathlib import Path
 
 import config
 
+TIME_SLOTS = ("10:00", "14:00", "18:00", "22:00")
+
+
+def infer_time_slot(dt: datetime | None = None) -> str:
+    """按采集时刻归入 10:00 / 14:00 / 18:00 / 22:00 四档。"""
+    dt = dt or datetime.now()
+    h = dt.hour
+    if h < 12:
+        return "10:00"
+    if h < 16:
+        return "14:00"
+    if h < 20:
+        return "18:00"
+    return "22:00"
+
 
 def get_conn(db_path=None):
     db_path = Path(db_path) if db_path else config.DB_PATH
@@ -15,6 +30,34 @@ def get_conn(db_path=None):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _migrate_prices_table(conn):
+    """旧库补 time_slot 列，并扩展唯一键以支持同日四档采集。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(prices)").fetchall()}
+    if "time_slot" in cols:
+        return
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS prices_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            city TEXT NOT NULL,
+            hotel_name TEXT NOT NULL,
+            checkin_date TEXT NOT NULL,
+            room_type TEXT,
+            price REAL,
+            source TEXT DEFAULT 'ctrip',
+            crawled_at TEXT DEFAULT (datetime('now','localtime')),
+            time_slot TEXT NOT NULL DEFAULT '10:00',
+            UNIQUE(city, hotel_name, checkin_date, room_type, time_slot)
+        );
+        INSERT INTO prices_new (
+            id, city, hotel_name, checkin_date, room_type, price, source, crawled_at, time_slot
+        )
+        SELECT id, city, hotel_name, checkin_date, room_type, price, source, crawled_at, '10:00'
+        FROM prices;
+        DROP TABLE prices;
+        ALTER TABLE prices_new RENAME TO prices;
+    """)
 
 
 def init_db(db_path=None):
@@ -29,9 +72,11 @@ def init_db(db_path=None):
             price REAL,
             source TEXT DEFAULT 'ctrip',
             crawled_at TEXT DEFAULT (datetime('now','localtime')),
-            UNIQUE(city, hotel_name, checkin_date, room_type)
+            time_slot TEXT NOT NULL DEFAULT '10:00',
+            UNIQUE(city, hotel_name, checkin_date, room_type, time_slot)
         )
     """)
+    _migrate_prices_table(conn)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS crawl_progress (
             city TEXT NOT NULL,
@@ -46,17 +91,21 @@ def init_db(db_path=None):
     conn.close()
 
 
-def upsert_price(city, hotel_name, checkin_date, room_type, price, source="ctrip", db_path=None):
-    """同酒店同日期同房型重复采集时更新价格，天然支持时间序列累积。"""
+def upsert_price(
+    city, hotel_name, checkin_date, room_type, price,
+    source="ctrip", time_slot=None, db_path=None,
+):
+    """同酒店、入住日、房型、采集时段重复采集时更新价格。"""
+    time_slot = time_slot or infer_time_slot()
     conn = get_conn(db_path)
     conn.execute("""
-        INSERT INTO prices (city, hotel_name, checkin_date, room_type, price, source)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(city, hotel_name, checkin_date, room_type)
+        INSERT INTO prices (city, hotel_name, checkin_date, room_type, price, source, time_slot)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(city, hotel_name, checkin_date, room_type, time_slot)
         DO UPDATE SET price = excluded.price,
                       source = excluded.source,
                       crawled_at = datetime('now','localtime')
-    """, (city, hotel_name, checkin_date, room_type, price, source))
+    """, (city, hotel_name, checkin_date, room_type, price, source, time_slot))
     conn.commit()
     conn.close()
 
@@ -85,8 +134,8 @@ def has_crawled(city, checkin_date, db_path=None):
     return row is not None and row["status"] == "ok"
 
 
-def query_prices(city=None, start_date=None, end_date=None, keyword=None, db_path=None):
-    """查询价格记录。可按城市、入住日起止、酒店名关键词过滤。"""
+def query_prices(city=None, start_date=None, end_date=None, keyword=None, hotel_names=None, db_path=None):
+    """查询价格记录。可按城市、入住日起止、酒店名（单个/多个）过滤。"""
     conn = get_conn(db_path)
     clauses = []
     params = []
@@ -99,13 +148,24 @@ def query_prices(city=None, start_date=None, end_date=None, keyword=None, db_pat
     if end_date:
         clauses.append("checkin_date<=?")
         params.append(str(end_date)[:10])
-    if keyword:
+    names = list(hotel_names) if hotel_names else []
+    if not names and keyword:
+        from scraper import parse_hotel_names
+        names = parse_hotel_names(keyword)
+    if len(names) > 1:
+        like_parts = ["hotel_name LIKE ?"] * len(names)
+        clauses.append("(" + " OR ".join(like_parts) + ")")
+        params.extend(f"%{n}%" for n in names)
+    elif len(names) == 1:
+        clauses.append("hotel_name LIKE ?")
+        params.append(f"%{names[0]}%")
+    elif keyword:
         clauses.append("hotel_name LIKE ?")
         params.append(f"%{keyword}%")
     sql = "SELECT * FROM prices"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY city, checkin_date, hotel_name, room_type"
+    sql += " ORDER BY city, checkin_date, hotel_name, room_type, time_slot"
     rows = conn.execute(sql, params).fetchall()
     conn.close()
     return rows

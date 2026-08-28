@@ -14,6 +14,7 @@ COPY_FILES = [
     "storage.py",
     "analyzer.py",
     "exporter.py",
+    "business_report.py",
     "requirements.txt",
     "README.md",
     "启动.bat",
@@ -60,6 +61,7 @@ def main():
     for name in COPY_FILES:
         _copy_tree(name, ROOT / name, OUT, missing)
     _copy_tree("gui", ROOT / "gui", OUT, missing)
+    _copy_tree("assets", ROOT / "assets", OUT, missing)
 
     if missing:
         print()

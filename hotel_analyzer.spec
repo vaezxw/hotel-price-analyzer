@@ -1,11 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec：桌面 GUI 版 → Windows onedir 目录。"""
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 block_cipher = None
+ROOT = Path(SPECPATH)
 
 pw_datas, pw_binaries, pw_hidden = collect_all("playwright")
 ctk_datas, ctk_binaries, ctk_hidden = collect_all("customtkinter")
+
+icon_ico = ROOT / "assets" / "app_icon.ico"
+icon_png = ROOT / "assets" / "app_icon.png"
+asset_datas = []
+if icon_ico.is_file():
+    asset_datas.append((str(icon_ico), "assets"))
+if icon_png.is_file():
+    asset_datas.append((str(icon_png), "assets"))
 
 hidden = (
     list(pw_hidden)
@@ -16,6 +27,7 @@ hidden = (
         "pyee",
         "openpyxl",
         "openpyxl.cell._writer",
+        "business_report",
         "matplotlib.backends.backend_agg",
         "customtkinter",
         "tkinter",
@@ -27,7 +39,7 @@ a = Analysis(
     ["gui/app.py"],
     pathex=[],
     binaries=pw_binaries + ctk_binaries,
-    datas=pw_datas + ctk_datas,
+    datas=pw_datas + ctk_datas + asset_datas,
     hiddenimports=hidden,
     hookspath=[],
     hooksconfig={},
@@ -57,6 +69,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(icon_ico) if icon_ico.is_file() else None,
 )
 
 coll = COLLECT(

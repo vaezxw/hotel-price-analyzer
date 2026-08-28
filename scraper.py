@@ -61,6 +61,39 @@ def clean_price(text):
         return None
 
 
+def parse_hotel_names(text):
+    """
+    解析多个酒店名：支持换行、逗号、分号分隔。
+    返回去重后的非空列表。
+    """
+    if not text or not str(text).strip():
+        return []
+    parts = re.split(r"[\n\r,，;；|]+", str(text))
+    seen = set()
+    out = []
+    for p in parts:
+        name = re.sub(r"\s+", " ", p).strip()
+        if name and name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def _name_match_score(hotel_name, query):
+    """酒店名与搜索词匹配得分，越高越优先。"""
+    if not hotel_name or not query:
+        return 0
+    n = hotel_name.strip()
+    q = query.strip()
+    if n == q:
+        return 100
+    if q in n:
+        return 80 + min(19, len(q) * 20 // max(len(n), 1))
+    if n in q:
+        return 60
+    return 0
+
+
 def _dedupe_rooms(rooms):
     """同名房型保留最低价；返回 [(room_type, price), ...]。"""
     best = {}
@@ -344,119 +377,85 @@ async def detect_captcha(page):
     return False
 
 
-async def scrape_city(page, city, check_in, check_out, max_hotels=None, progress=None, keyword=None,
-                      full_rooms=None):
-    """
-    采集单个城市单个入住日期的酒店价格。
-    keyword：可选酒店名关键词，传入后在页面搜索框输入并点击搜索，精确采集某家/某几家酒店。
-    full_rooms：True 时进入详情页采集全部房型；False 仅采列表页首推房型。
-    返回 (酒店数, 记录数, 是否被验证码拦截)。
-    """
-    max_hotels = max_hotels or config.HOTELS_PER_CITY
-    full_rooms = config.COLLECT_ALL_ROOMS if full_rooms is None else full_rooms
-    city_id = _get_city_id(city)
-    url = config.CTRIP_LIST_URL.format(
-        city_id=city_id, check_in=check_in, check_out=check_out,
-    )
-    progress = progress or (lambda *a, **k: None)
+async def _search_keyword_on_page(page, keyword, label, progress):
+    """在列表页搜索框输入关键词并搜索。"""
+    inputs = page.locator(config.SELECTORS["search_input"])
+    n = await inputs.count()
+    search_input = None
+    best_x = -1
+    for i in range(n):
+        el = inputs.nth(i)
+        if not await el.is_visible():
+            continue
+        box = await el.bounding_box()
+        if box and box.get("x", 0) > best_x:
+            best_x = box["x"]
+            search_input = el
 
-    label = f"[{city}{f'·{keyword}' if keyword else ''} {check_in}]"
-    progress(f"{label} 打开列表页...")
-    await page.goto(url, wait_until="domcontentloaded", timeout=config.PAGE_TIMEOUT_MS)
-    # 页面 React 组件需要一点初始化时间，否则搜索框/按钮可能可见但事件未绑定
-    await asyncio.sleep(2)
+    search_btn = page.locator(config.SELECTORS["search_btn"]).first
+    if not search_input or not await search_btn.is_visible():
+        progress(f"{label} 警告：未找到页面搜索框，将按当前列表采集")
+        return False
 
-    # 登录态失效 / 未登录：被硬重定向到 passport 登录页
-    if is_login_url(page.url):
-        progress(f"{label} 需要登录（或登录态已失效），请先执行: python main.py login")
-        return 0, 0, "login_required"
-
-    # 若有关键词，在页面搜索框输入并点击「搜索」按钮
-    if keyword:
-        try:
-            # 页面上有 2 个 input#destinationInput（sticky header + 主体搜索栏），
-            # 必须选主体搜索栏（x 坐标较大、宽度较大），否则输入无效。
-            inputs = page.locator(config.SELECTORS["search_input"])
-            n = await inputs.count()
-            search_input = None
-            best_x = -1
-            for i in range(n):
-                el = inputs.nth(i)
-                if not await el.is_visible():
-                    continue
-                box = await el.bounding_box()
-                if box and box.get("x", 0) > best_x:
-                    best_x = box["x"]
-                    search_input = el
-
-            search_btn = page.locator(config.SELECTORS["search_btn"]).first
-            if search_input and await search_btn.is_visible():
-                progress(f"{label} 搜索关键词：{keyword}")
-                await search_input.scroll_into_view_if_needed()
-                await search_input.click()
-                await search_input.fill("")
-                await search_input.type(keyword, delay=30)
-                await asyncio.sleep(0.8)
-                await search_btn.click()
-                # 等待搜索结果加载（URL 出现 searchWord 或卡片刷新）
-                await page.wait_for_timeout(3000)
-                try:
-                    await page.wait_for_selector(
-                        config.SELECTORS["hotel_card"],
-                        timeout=config.WAIT_SELECTOR_MS,
-                    )
-                except Exception:
-                    pass
-            else:
-                progress(f"{label} 警告：未找到页面搜索框，将按城市列表采集")
-        except Exception as e:
-            progress(f"{label} 关键词搜索失败：{e}，将按城市列表采集")
-
-    # 等待卡片出现或验证码
+    progress(f"{label} 搜索：{keyword}")
+    await search_input.scroll_into_view_if_needed()
+    await search_input.click()
+    await search_input.fill("")
+    await search_input.type(keyword, delay=30)
+    await asyncio.sleep(0.8)
+    await search_btn.click()
+    await page.wait_for_timeout(3000)
     try:
         await page.wait_for_selector(
             config.SELECTORS["hotel_card"],
             timeout=config.WAIT_SELECTOR_MS,
         )
     except Exception:
-        if await detect_captcha(page):
-            progress(f"{label} !! 触发验证码/风控，已停止（建议稍后再试）")
-            return 0, 0, "captcha"
-        # JS 重定向可能发生在等待期间，再次检测
-        if is_login_url(page.url):
-            progress(f"{label} 需要登录（或登录态已失效），请先执行: python main.py login")
-            return 0, 0, "login_required"
-        # 输出当前页面信息便于诊断
-        try:
-            info_title = (await page.title()) or "(无标题)"
-            progress(f"{label} 当前页面：{page.url}")
-            progress(f"{label} 页面标题：{info_title}")
-        except Exception:
-            pass
-        # 保存页面快照，便于核对真实 DOM 修正选择器
-        await _dump_page_html(
-            page, config.BASE_DIR / "data" / f"debug_collect_{city}_{check_in}.html", progress
-        )
-        progress(f"{label} 未找到酒店卡片（可能无结果或页面结构变化）")
-        return 0, 0, False
+        pass
+    return True
 
-    # 懒加载滚动几次（每次滚动后统计卡片数，数量稳定即停止）
+
+async def _scroll_and_load_cards(page):
+    """滚动列表页加载酒店卡片。"""
     prev_count = len(await page.query_selector_all(config.SELECTORS["hotel_card"]))
     for i in range(config.SCROLL_TIMES):
         await page.mouse.wheel(0, 3000)
         await asyncio.sleep(random.uniform(1.0, 1.8))
         cur_count = len(await page.query_selector_all(config.SELECTORS["hotel_card"]))
         if cur_count == prev_count and i >= 1:
-            break  # 数量不再增长，说明已到底
+            break
         prev_count = cur_count
+    return await page.query_selector_all(config.SELECTORS["hotel_card"])
 
-    cards = await page.query_selector_all(config.SELECTORS["hotel_card"])
-    mode = "详情页全房型" if full_rooms else "列表页首推"
-    progress(f"{label} 共 {len(cards)} 张酒店卡片（取前 {min(max_hotels, len(cards))} 家，{mode}）")
 
-    # 先从列表页收集目标酒店，再逐个进详情（避免反复返回列表页）
+async def _build_targets(cards, max_hotels, keyword=None, *, pick_best=False, progress=None):
+    """从卡片列表构建待采集目标；pick_best 时只取匹配度最高的一家。"""
+    progress = progress or (lambda *a, **k: None)
     targets = []
     seen = set()
+
+    if pick_best and keyword:
+        best = None
+        best_score = 0
+        for card in cards:
+            try:
+                hotel_id, name = await extract_card_meta(card)
+                if not name:
+                    name, _, _ = await extract_card(card)
+                if not name:
+                    continue
+                score = _name_match_score(name, keyword)
+                if score > best_score:
+                    best_score = score
+                    best = {"hotel_id": hotel_id, "name": name, "card": card}
+            except Exception:
+                continue
+        if best and best_score > 0:
+            targets.append(best)
+        else:
+            progress(f"  未找到与「{keyword}」匹配的酒店")
+        return targets
+
     for card in cards[:max_hotels]:
         try:
             hotel_id, name = await extract_card_meta(card)
@@ -470,9 +469,13 @@ async def scrape_city(page, city, check_in, check_out, max_hotels=None, progress
             targets.append({"hotel_id": hotel_id, "name": name, "card": card})
         except Exception:
             continue
+    return targets
 
+
+async def _scrape_targets(page, city, city_id, check_in, check_out, targets, full_rooms, progress):
+    """逐家采集 targets 中的酒店房型并入库。"""
     saved = 0
-    for idx, target in enumerate(targets):
+    for target in targets:
         name = target["name"]
         hotel_id = target["hotel_id"]
         rooms = []
@@ -482,9 +485,9 @@ async def scrape_city(page, city, check_in, check_out, max_hotels=None, progress
                 page, hotel_id, city_id, check_in, check_out, name, progress,
             )
             if blocked == "login_required":
-                return len(seen), saved, "login_required"
+                return len(targets), saved, "login_required"
             if blocked == "captcha":
-                return len(seen), saved, "captcha"
+                return len(targets), saved, "captcha"
             await asyncio.sleep(random.uniform(*config.DETAIL_DELAY_RANGE))
         elif full_rooms:
             progress(f"  警告：{name} 无 hotelId，退回列表页首推房型")
@@ -509,7 +512,10 @@ async def scrape_city(page, city, check_in, check_out, max_hotels=None, progress
             continue
 
         for room_type, price in rooms:
-            storage.upsert_price(city, name, check_in, room_type, price)
+            storage.upsert_price(
+                city, name, check_in, room_type, price,
+                time_slot=storage.infer_time_slot(),
+            )
             saved += 1
         if len(rooms) == 1:
             rt, pr = rooms[0]
@@ -519,7 +525,127 @@ async def scrape_city(page, city, check_in, check_out, max_hotels=None, progress
             more = f" 等{len(rooms)}个房型" if len(rooms) > 5 else ""
             progress(f"  ✓ {name} | {len(rooms)} 个房型：{prices}{more}")
 
-    return len(seen), saved, False
+    return len(targets), saved, False
+
+
+async def _wait_cards_or_fail(page, city, check_in, label, progress):
+    """等待酒店卡片；失败时返回 (0,0,blocked) 或 (0,0,False)。"""
+    try:
+        await page.wait_for_selector(
+            config.SELECTORS["hotel_card"],
+            timeout=config.WAIT_SELECTOR_MS,
+        )
+    except Exception:
+        if await detect_captcha(page):
+            progress(f"{label} !! 触发验证码/风控，已停止（建议稍后再试）")
+            return "captcha"
+        if is_login_url(page.url):
+            progress(f"{label} 需要登录（或登录态已失效），请先执行: python main.py login")
+            return "login_required"
+        try:
+            info_title = (await page.title()) or "(无标题)"
+            progress(f"{label} 当前页面：{page.url}")
+            progress(f"{label} 页面标题：{info_title}")
+        except Exception:
+            pass
+        await _dump_page_html(
+            page, config.BASE_DIR / "data" / f"debug_collect_{city}_{check_in}.html", progress
+        )
+        progress(f"{label} 未找到酒店卡片（可能无结果或页面结构变化）")
+        return "no_cards"
+    return None
+
+
+async def _scrape_city_once(
+    page, city, check_in, check_out, *, keyword=None, max_hotels=None,
+    pick_best=False, full_rooms=None, progress=None,
+):
+    """单次列表页采集（可选一个搜索词）。"""
+    max_hotels = max_hotels or config.HOTELS_PER_CITY
+    full_rooms = config.COLLECT_ALL_ROOMS if full_rooms is None else full_rooms
+    city_id = _get_city_id(city)
+    url = config.CTRIP_LIST_URL.format(
+        city_id=city_id, check_in=check_in, check_out=check_out,
+    )
+    progress = progress or (lambda *a, **k: None)
+
+    label = f"[{city}{f'·{keyword}' if keyword else ''} {check_in}]"
+    progress(f"{label} 打开列表页...")
+    await page.goto(url, wait_until="domcontentloaded", timeout=config.PAGE_TIMEOUT_MS)
+    await asyncio.sleep(2)
+
+    if is_login_url(page.url):
+        progress(f"{label} 需要登录（或登录态已失效），请先执行: python main.py login")
+        return 0, 0, "login_required"
+
+    if keyword:
+        try:
+            await _search_keyword_on_page(page, keyword, label, progress)
+        except Exception as e:
+            progress(f"{label} 关键词搜索失败：{e}，将按城市列表采集")
+
+    blocked = await _wait_cards_or_fail(page, city, check_in, label, progress)
+    if blocked == "captcha":
+        return 0, 0, "captcha"
+    if blocked == "login_required":
+        return 0, 0, "login_required"
+    if blocked == "no_cards":
+        return 0, 0, False
+
+    cards = await _scroll_and_load_cards(page)
+    mode = "详情页全房型" if full_rooms else "列表页首推"
+    limit = 1 if pick_best else min(max_hotels, len(cards))
+    progress(f"{label} 共 {len(cards)} 张酒店卡片（取 {limit} 家，{mode}）")
+
+    targets = await _build_targets(
+        cards, max_hotels if not pick_best else len(cards),
+        keyword=keyword, pick_best=pick_best, progress=progress,
+    )
+    if not targets:
+        return 0, 0, False
+
+    return await _scrape_targets(
+        page, city, city_id, check_in, check_out, targets, full_rooms, progress,
+    )
+
+
+async def scrape_city(page, city, check_in, check_out, max_hotels=None, progress=None, keyword=None,
+                      hotel_names=None, full_rooms=None):
+    """
+    采集单个城市单个入住日期的酒店价格。
+    keyword / hotel_names：指定酒店名；多个名称时逐个搜索、每家采一条最佳匹配。
+    full_rooms：True 时进入详情页采集全部房型；False 仅采列表页首推房型。
+    返回 (酒店数, 记录数, 是否被验证码拦截)。
+    """
+    progress = progress or (lambda *a, **k: None)
+    names = list(hotel_names) if hotel_names else parse_hotel_names(keyword)
+    if not names and keyword:
+        names = [keyword.strip()]
+
+    if len(names) > 1:
+        progress(f"指定 {len(names)} 家酒店，将逐个搜索采集")
+        total_h = total_r = 0
+        for i, q in enumerate(names, 1):
+            progress(f"--- 指定酒店 {i}/{len(names)}：{q} ---")
+            h, r, blocked = await _scrape_city_once(
+                page, city, check_in, check_out,
+                keyword=q, max_hotels=1, pick_best=True,
+                full_rooms=full_rooms, progress=progress,
+            )
+            total_h += h
+            total_r += r
+            if blocked:
+                return total_h, total_r, blocked
+            if i < len(names):
+                await asyncio.sleep(random.uniform(*config.REQUEST_DELAY_RANGE))
+        return total_h, total_r, False
+
+    single_kw = names[0] if len(names) == 1 else None
+    return await _scrape_city_once(
+        page, city, check_in, check_out,
+        keyword=single_kw, max_hotels=max_hotels, pick_best=False,
+        full_rooms=full_rooms, progress=progress,
+    )
 
 
 def _get_city_id(city):
