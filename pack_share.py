@@ -14,6 +14,7 @@ COPY_FILES = [
     "storage.py",
     "analyzer.py",
     "exporter.py",
+    "business_report.py",
     "requirements.txt",
     "README.md",
     "启动.bat",

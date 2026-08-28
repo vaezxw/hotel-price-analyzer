@@ -98,11 +98,14 @@ class HotelAnalyzerApp(ctk.CTk):
         )
         self.city_menu.grid(row=0, column=1, padx=4, pady=8, sticky="ew")
 
-        ctk.CTkLabel(form, text="关键词").grid(row=0, column=2, padx=(12, 4), pady=8, sticky="w")
-        self.keyword_entry = ctk.CTkEntry(form, placeholder_text="可选，精确匹配酒店名")
-        self.keyword_entry.grid(row=0, column=3, columnspan=3, padx=(4, 12), pady=8, sticky="ew")
+        ctk.CTkLabel(
+            form,
+            text="指定酒店\n(一行一个)",
+        ).grid(row=1, column=0, padx=(12, 4), pady=8, sticky="nw")
+        self.hotels_box = ctk.CTkTextbox(form, height=68)
+        self.hotels_box.grid(row=1, column=1, columnspan=5, padx=(4, 12), pady=8, sticky="ew")
 
-        ctk.CTkLabel(form, text="入住开始").grid(row=1, column=0, padx=(12, 4), pady=8, sticky="w")
+        ctk.CTkLabel(form, text="入住开始").grid(row=2, column=0, padx=(12, 4), pady=8, sticky="w")
         self.start_entry = DatePickerEntry(
             form,
             initial=date.today(),
@@ -110,19 +113,19 @@ class HotelAnalyzerApp(ctk.CTk):
             width=160,
             command=self._on_start_date_changed,
         )
-        self.start_entry.grid(row=1, column=1, padx=4, pady=8, sticky="ew")
+        self.start_entry.grid(row=2, column=1, padx=4, pady=8, sticky="ew")
 
-        ctk.CTkLabel(form, text="入住结束").grid(row=1, column=2, padx=(12, 4), pady=8, sticky="w")
+        ctk.CTkLabel(form, text="入住结束").grid(row=2, column=2, padx=(12, 4), pady=8, sticky="w")
         self.end_entry = DatePickerEntry(
             form,
             initial=date.today() + timedelta(days=6),
             mindate=date.today(),
             width=160,
         )
-        self.end_entry.grid(row=1, column=3, padx=4, pady=8, sticky="ew")
+        self.end_entry.grid(row=2, column=3, padx=4, pady=8, sticky="ew")
 
         opts = ctk.CTkFrame(form, fg_color="transparent")
-        opts.grid(row=2, column=0, columnspan=6, sticky="ew", padx=8, pady=(0, 8))
+        opts.grid(row=3, column=0, columnspan=6, sticky="ew", padx=8, pady=(0, 8))
         self.debug_var = ctk.BooleanVar(value=False)
         self.force_var = ctk.BooleanVar(value=False)
         self.list_only_var = ctk.BooleanVar(value=False)
@@ -224,7 +227,7 @@ class HotelAnalyzerApp(ctk.CTk):
         state = "normal" if agreed else "disabled"
         self.login_btn.configure(state=state)
         self.city_menu.configure(state=state)
-        self.keyword_entry.configure(state=state)
+        self.hotels_box.configure(state=state)
         self.start_entry.configure(state=state)
         self.end_entry.configure(state=state)
         for btn in self._action_btns:
@@ -249,13 +252,24 @@ class HotelAnalyzerApp(ctk.CTk):
             self.end_entry.set_date(d)
         self.end_entry.set_mindate(d)
 
+    def _get_hotel_input(self) -> str | None:
+        raw = self.hotels_box.get("1.0", "end")
+        parts = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                parts.append(line)
+        if not parts:
+            return None
+        return "\n".join(parts)
+
     def _set_busy(self, busy: bool):
         self._busy = busy
         if busy:
             state = "disabled"
             self.login_btn.configure(state=state)
             self.city_menu.configure(state=state)
-            self.keyword_entry.configure(state=state)
+            self.hotels_box.configure(state=state)
             self.start_entry.configure(state=state)
             self.end_entry.configure(state=state)
             for btn in self._action_btns:
@@ -311,7 +325,7 @@ class HotelAnalyzerApp(ctk.CTk):
             messagebox.showerror("参数错误", "请选择城市。")
             return None
 
-        keyword = self.keyword_entry.get().strip() or None
+        keyword = self._get_hotel_input()
         return SimpleNamespace(
             city=city if not self.all_cities_var.get() else None,
             keyword=keyword,

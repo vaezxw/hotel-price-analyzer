@@ -3,6 +3,7 @@
 Excel 导出模块：明细 / 城市汇总 / 价格趋势图 / 波动率排行 四个 Sheet。
 """
 import io
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -48,14 +49,32 @@ _setup_cn_font()
 # ------------------------------------------------------------------
 # 导出路径（统一归纳到 输出/excel/YYYY-MM-DD/）
 # ------------------------------------------------------------------
+_WIN_BAD = re.compile(r'[\\/:*?"<>|\x00-\x1f\x7f]')
+
+
 def _safe_filename(text, max_len=30):
-    """去掉 Windows 文件名非法字符并截断。"""
+    """去掉 Windows 文件名非法字符（含换行等控制符）并截断。"""
     if not text:
         return ""
-    for ch in '\\/:*?"<>|':
-        text = text.replace(ch, "_")
-    text = text.strip().strip(".")
-    return text[:max_len] if max_len else text
+    text = _WIN_BAD.sub("_", str(text))
+    text = re.sub(r"\s+", " ", text).strip().strip(".")
+    if max_len:
+        text = text[:max_len].rstrip(" .")
+    return text or "export"
+
+
+def _keyword_slug(keyword, max_len=24):
+    """多酒店关键词压成合法短文件名：单家用店名，多家用「第一家等N家」。"""
+    if not keyword:
+        return ""
+    names = [n.strip() for n in re.split(r"[\n\r,，;；|]+", str(keyword)) if n.strip()]
+    if not names:
+        return ""
+    if len(names) == 1:
+        return _safe_filename(names[0], max_len)
+    suffix = f"等{len(names)}家"
+    head = _safe_filename(names[0], max(4, max_len - len(suffix)))
+    return f"{head}{suffix}"
 
 
 def resolve_export_path(output_path=None, *, city=None, start_date=None, end_date=None, keyword=None):
@@ -77,7 +96,8 @@ def resolve_export_path(output_path=None, *, city=None, start_date=None, end_dat
             p.parent.mkdir(parents=True, exist_ok=True)
             return p
         if len(p.parts) == 1:
-            return today_dir / p.name
+            stem = _safe_filename(p.stem, max_len=0)
+            return today_dir / f"{stem}.xlsx"
         out = config.OUTPUT_DIR / p
         out.parent.mkdir(parents=True, exist_ok=True)
         return out
@@ -85,8 +105,9 @@ def resolve_export_path(output_path=None, *, city=None, start_date=None, end_dat
     parts = []
     if city:
         parts.append(_safe_filename(city, 20))
-    if keyword:
-        parts.append(_safe_filename(keyword, 24))
+    slug = _keyword_slug(keyword, 24)
+    if slug:
+        parts.append(slug)
     if start_date:
         s = start_date.replace("-", "")
         e = (end_date or start_date).replace("-", "")
@@ -155,11 +176,17 @@ def export_excel(rows, output_path=None, trend=None, volatility=None, mom=None,
     # ---------- Sheet 1: 明细数据 ----------
     ws = wb.active
     ws.title = "明细数据"
-    headers = ["城市", "酒店名称", "入住日期", "房型", "价格(元/晚)", "来源", "采集时间"]
+    has_slot = rows and "time_slot" in rows[0].keys()
+    headers = ["城市", "酒店名称", "入住日期", "房型", "价格(元/晚)", "采集时段", "来源", "采集时间"]
+    if not has_slot:
+        headers = [h for h in headers if h != "采集时段"]
     ws.append(headers)
     for r in rows:
-        ws.append([r["city"], r["hotel_name"], r["checkin_date"], r["room_type"],
-                   r["price"], r["source"], r["crawled_at"]])
+        row = [r["city"], r["hotel_name"], r["checkin_date"], r["room_type"], r["price"]]
+        if has_slot:
+            row.append(r["time_slot"])
+        row.extend([r["source"], r["crawled_at"]])
+        ws.append(row)
     _style_header(ws, headers)
 
     # ---------- Sheet 2: 城市汇总 ----------
